@@ -36,13 +36,30 @@ def get_state():
     if not ret:
         return jsonify({"error": "Camera read failed"})
 
-    emotion = get_emotion(frame)
-    action, question = get_next_question(emotion)
+    face_emotion = get_emotion(frame)
+
+    # last behavior (default)
+    behavior_emotion = "Engaged"
+
+    final_emotion = fuse_emotions(face_emotion, behavior_emotion)
+
+    action, question = get_next_question(final_emotion)
+
+    # 📊 log timeline
+    timeline.append({
+        "time": time.time(),
+        "emotion": final_emotion
+    })
+
+    # keep last 20 points
+    if len(timeline) > 20:
+        timeline.pop(0)
 
     return jsonify({
-        "emotion": emotion,
+        "emotion": final_emotion,
         "action": action,
-        "question": question
+        "question": question,
+        "timeline": timeline
     })
 
 # 👉 NEW: ANSWER SUBMISSION
