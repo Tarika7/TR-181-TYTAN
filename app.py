@@ -5,6 +5,8 @@ import time
 import sys
 import os
 import uuid
+import base64
+import numpy as np
 from werkzeug.utils import secure_filename
 
 # Add current directory to path for imports
@@ -12,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from emotion import get_emotion
 from logic import get_next_question, get_current_answer
+from claude import generate_dynamic_lesson
 from cognitive import cognitive_score
 from fusion import fuse_emotions, tutor_score
 
@@ -197,7 +200,7 @@ def upload_pdf():
             }), 503
         
         print(f"🔄 Processing PDF: {filename}")
-        topic_data, questions = process_pdf_to_topic_graph(filepath, subject="mathematics")
+        topic_data = process_pdf_to_topic_graph(filepath, subject="mathematics")
         print(f"✅ Extracted {len(topic_data.get('topics', []))} topics")
 
         return jsonify({
@@ -208,7 +211,7 @@ def upload_pdf():
             "learning_objectives": topic_data.get("learning_objectives", []),
             "estimated_duration": topic_data.get("estimated_duration_minutes", 45),
             "topic_data": topic_data,
-            "questions": questions
+            "questions": {} # Send empty dict to keep frontend format compatible temporarily
         })
 
     except Exception as e:
@@ -223,11 +226,13 @@ def create_session():
     try:
         data = request.json
         topic_data = data.get("topic_data")
-        questions = data.get("questions")
         time_minutes = int(data.get("time_minutes", 15))
 
-        if not topic_data or not questions:
-            return jsonify({"error": "Missing data"}), 400
+        if not topic_data:
+            return jsonify({"error": "Missing topic_data"}), 400
+        
+        # questions is now empty dict by default - lessons are generated dynamically
+        questions = data.get("questions", {})
 
         session_id = str(uuid.uuid4())[:8]
         result = session_manager.create_session(
@@ -255,27 +260,45 @@ def get_state_advanced():
     try:
         data = request.json
         topic_id = data.get("topic_id", "unknown")
+        frame_b64 = data.get("frame")
 
         start = time.time()
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        ret, frame = cap.read()
-        cap.release()
+        
+        if frame_b64:
+            try:
+                # Handle raw base64 or data uri protocol cleanly
+                if ',' in frame_b64:
+                    img_data = base64.b64decode(frame_b64.split(',')[1])
+                else:
+                    img_data = base64.b64decode(frame_b64)
+                    
+                nparr = np.frombuffer(img_data, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                ret = True if frame is not None else False
+            except Exception:
+                ret = False
+                frame = None
+        else:
+            ret = False
+            frame = None
 
-        if not ret:
-            return jsonify({"error": "Camera failed"}), 400
-
-        # Emotion detection
-        face_emotion = get_emotion(frame)
-
-        # Distraction detection (optional feature if ultralytics available)
         has_distractions = False
         critical_distraction = False
         distractions = []
-        if detector is not None:
-            distraction_result = detector.detect_distractions(frame)
-            has_distractions = distraction_result['has_distractions']
-            critical_distraction = distraction_result['critical_distraction']
-            distractions = distraction_result['distractions']
+        
+        if not ret or frame is None:
+            # Drop frame gracefully without returning 400 error breaking the loop
+            face_emotion = "Engaged"
+        else:
+            # Emotion detection
+            face_emotion = get_emotion(frame)
+    
+            # Distraction detection (optional feature if ultralytics available)
+            if detector is not None:
+                distraction_result = detector.detect_distractions(frame)
+                has_distractions = distraction_result['has_distractions']
+                critical_distraction = distraction_result['critical_distraction']
+                distractions = distraction_result['distractions']
 
         # Check distraction block
         block_status = session_manager.check_distraction_block()
@@ -303,8 +326,8 @@ def get_state_advanced():
                 **block_result
             })
 
-        action, question = get_next_question(final_emotion)
         session_info = session_manager.get_session_info()
+        mastery = session_manager.metrics.topic_mastery.get(topic_id, {})
 
         timeline.append({
             "timestamp": time.time(),
@@ -318,15 +341,12 @@ def get_state_advanced():
         latency = round((time.time() - start) * 1000, 2)
         intervention_msg = get_intervention_message(final_emotion, has_distractions, distractions)
         strategy = teaching_strategy
-        mastery = session_manager.metrics.topic_mastery.get(topic_id, {})
 
         return jsonify({
             "status": "success",
             "emotion": final_emotion,
             "face_emotion": face_emotion,
             "teaching_strategy": strategy,
-            "action": action,
-            "question": question,
             "intervention_message": intervention_msg,
             "intervention_needed": intervention_needed,
             "distractions": distractions,
@@ -338,7 +358,42 @@ def get_state_advanced():
         })
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"❌ Error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/get_next_lesson", methods=["POST"])
+def get_next_lesson():
+    """Dynamically generate tailored teachings and questions"""
+    try:
+        data = request.json
+        topic_id = data.get("topic_id")
+        emotion = data.get("emotion", "Engaged")
+        
+        session_info = session_manager.get_session_info()
+        topics = session_info.get("topic_data", {}).get("topics", [])
+        
+        topic_data = next((t for t in topics if t.get("id") == topic_id), None)
+        if not topic_data:
+            return jsonify({"error": "Topic not found"}), 404
+            
+        print(f"Generating lesson for {topic_id} adapted to {emotion}")
+        lesson_data = generate_dynamic_lesson(topic_data, emotion)
+        
+        if topic_id not in session_manager.metrics.topic_mastery:
+            session_manager.metrics.topic_mastery[topic_id] = {
+                'questions_asked': 0, 'correct_answers': 0, 'mastery_score': 0.0, 
+                'difficulty_level': 1, 'current_q_index': 0, 'expected_answer': ''
+            }
+            
+        session_manager.metrics.topic_mastery[topic_id]['expected_answer'] = lesson_data.get('answer', '')
+        
+        return jsonify(lesson_data)
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route("/submit_answer_advanced", methods=["POST"])
@@ -352,10 +407,23 @@ def submit_answer_advanced():
         current_emotion = data.get("emotion", "Engaged")
         time_taken = data.get("time_taken", 0)
 
-        correct = get_current_answer()
-        is_correct = str(user_answer).strip() == str(correct).strip()
+        expected = session_manager.metrics.topic_mastery.get(topic_id, {}).get('expected_answer', '')
+        if not expected:
+            # No expected answer stored - treat as open ended, always correct
+            is_correct = True
+        else:
+            # Fuzzy matching: check if any word from expected answer appears in user answer
+            user_words = set(str(user_answer).strip().lower().split())
+            expected_words = set(str(expected).strip().lower().split())
+            # Exact match or at least 1 meaningful word overlap (excluding stopwords)
+            stopwords = {'the','a','an','is','are','was','were','of','in','to','and','or','for','it','this','that'}
+            meaningful_expected = expected_words - stopwords
+            meaningful_user = user_words - stopwords
+            exact = str(user_answer).strip().lower() == str(expected).strip().lower()
+            overlap = len(meaningful_expected & meaningful_user) >= 1 if meaningful_expected else True
+            is_correct = exact or overlap
 
-        behavior_emotion = cognitive_score(user_answer, correct, current_emotion)
+        behavior_emotion = cognitive_score(user_answer, expected, current_emotion)
         last_behavior = behavior_emotion
 
         has_distraction = data.get("has_distraction", False)
@@ -383,13 +451,14 @@ def submit_answer_advanced():
 
         return jsonify({
             "status": "success",
-            "result": "Correct ✓" if is_correct else "Not Quite - Try Again",
+            "result": "Correct ✓" if is_correct else "Not quite - keep trying!",
             "is_correct": is_correct,
             "behavior_emotion": behavior_emotion,
-            "expected_answer": correct,
+            "expected_answer": expected,
             "offer_challenge": offer_challenge,
             "challenge_question": challenge_question,
-            "mastery_update": mastery
+            "mastery_update": mastery,
+            "emotion_adaptation": f"Lesson adapted to your current mood: {current_emotion}" if current_emotion != "Engaged" else None
         })
 
     except Exception as e:
