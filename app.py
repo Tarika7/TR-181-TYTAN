@@ -5,6 +5,11 @@ import cv2
 from emotion import get_emotion
 from logic import get_next_question, get_current_answer
 from behavior import evaluate_answer
+from fusion import fuse_emotions
+import time
+
+# store timeline
+timeline = []
 
 app = Flask(__name__, static_folder="../frontend")
 CORS(app)
