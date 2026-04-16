@@ -5,19 +5,23 @@
 </head>
 <body>
     <h1>Emotion-Aware Tutor</h1>
+
     <h2 id="emotion">Emotion: ...</h2>
     <h3 id="decision">System Action: ...</h3>
     <h3 id="question">Question: ...</h3>
+
     <input id="answer" placeholder="Type your answer">
     <button onclick="submitAnswer()">Submit</button>
 
-<h3 id="result"></h3>
-<h3 id="behavior"></h3>
+    <h3 id="result"></h3>
+    <h3 id="behavior"></h3>
 
-<!-- 📊 Chart -->
-<canvas id="chart" width="400" height="200"></canvas>
+    <h3 id="latency"></h3>
+    <h3 id="score"></h3>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="script.js"></script>
+    <canvas id="chart" width="400" height="200"></canvas>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>
