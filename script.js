@@ -8,7 +8,7 @@ function initChart() {
         data: {
             labels: [],
             datasets: [{
-                label: "Emotion",
+                label: "Engagement",
                 data: [],
                 fill: false
             }]
@@ -39,16 +39,19 @@ async function update() {
     document.getElementById("question").innerText =
         "Question: " + data.question;
 
-    // 📊 update chart
-    const labels = data.timeline.map((_, i) => i);
-    const values = data.timeline.map(t => emotionToNumber(t.emotion));
+    document.getElementById("latency").innerText =
+        "Latency: " + data.latency + " ms";
 
-    chart.data.labels = labels;
-    chart.data.datasets[0].data = values;
+    document.getElementById("score").innerText =
+        "Tutor Score: " + data.score;
+
+    // chart
+    chart.data.labels = data.timeline.map((_, i) => i);
+    chart.data.datasets[0].data =
+        data.timeline.map(t => emotionToNumber(t.emotion));
     chart.update();
 }
 
-// submit answer
 async function submitAnswer() {
     const answer = document.getElementById("answer").value;
 
@@ -67,7 +70,7 @@ async function submitAnswer() {
         "Behavior Emotion: " + data.behavior_emotion;
 }
 
-// init
 initChart();
 setInterval(update, 3000);
 update();
+   
