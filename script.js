@@ -1,39 +1,40 @@
 async function update() {
-    try {
-        const res = await fetch("/get_state");
-        const data = await res.json();
+    const res = await fetch("/get_state");
+    const data = await res.json();
 
-        console.log("API:", data);
+    if (data.error) return;
 
-        if (data.error) {
-            document.getElementById("emotion").innerText =
-                "Emotion: Camera Error";
+    document.getElementById("emotion").innerText =
+        "Emotion: " + data.emotion;
 
-            document.getElementById("decision").innerText =
-                "System Action: Waiting...";
+    document.getElementById("decision").innerText =
+        "System Action: " + data.action;
 
-            document.getElementById("question").innerText =
-                "Question: Check camera";
-
-            return;
-        }
-
-        document.getElementById("emotion").innerText =
-            "Emotion: " + data.emotion;
-
-        document.getElementById("decision").innerText =
-            "System Action: " + data.action;
-
-        document.getElementById("question").innerText =
-            "Question: " + data.question;
-
-    } catch (err) {
-        console.error(err);
-    }
+    document.getElementById("question").innerText =
+        "Question: " + data.question;
 }
 
-// Auto loop every 3 seconds (stable)
-setInterval(update, 3000);
+// 🔥 Submit answer
+async function submitAnswer() {
+    const answer = document.getElementById("answer").value;
 
-// Run immediately
+    const res = await fetch("/submit_answer", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ answer })
+    });
+
+    const data = await res.json();
+
+    document.getElementById("result").innerText =
+        "Result: " + data.result;
+
+    document.getElementById("behavior").innerText =
+        "Behavior Emotion: " + data.behavior_emotion;
+}
+
+// Auto update
+setInterval(update, 3000);
 update();
